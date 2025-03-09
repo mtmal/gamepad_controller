@@ -23,41 +23,62 @@
 // https://gist.github.com/jasonwhite/c5b2048c15993d285130#file-joystick-c
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/joystick.h>
+#include <generic_listener.h>
+#include "gamepad.h"
 
-#include <GenericTalker.h>
-#include <GenericThread.h>
-#include "GamepadEventData.h"
-
-
-class Gamepad : public GenericTalker<GamepadEventData>,
-                public GenericThread<Gamepad>
+Gamepad::Gamepad() 
+: GenericTalker<GamepadEventData>(),
+  GenericThread<Gamepad>(),
+  mDevice(0)
 {
-public:
-    /**
-     * Basic constructor.
-     */
-    Gamepad();
+}
 
-    /**
-     * Basic destructor, stops the event thread and closes joystick device.
-     */
-    virtual ~Gamepad();
+Gamepad::~Gamepad()
+{
+    stopThread();
+    if (mDevice >= 0)
+    {
+        close(mDevice);
+    }
+}
 
-    /**
-     * Initialises gamepad by opening device.
-     *  @param device path to joystick device.
-     *  @return true if connection was established.
-     */
-    bool initialise(const char* device = "/dev/input/js0");
+bool Gamepad::initialise(const char* device)
+{
+    mDevice = open(device, O_RDONLY);
+    return mDevice >= 0;
+}
 
-    /**
-     * Runs the main gamepad event loop.
-     *  @return nullptr
-     */
-    void* threadBody();
+void* Gamepad::threadBody()
+{
+    struct js_event event;
+    GamepadEventData eventData;
 
-private:
-    /** Device ID. */
-    int mDevice;
-};
+    while (isRunning())
+    {
+        if (read(mDevice, &event, sizeof(event)) == sizeof(event))
+        {
+            switch (event.type)
+            {
+                case JS_EVENT_BUTTON:
+                    // fall-through
+                case JS_EVENT_AXIS:
+                    eventData.mIsAxis = (JS_EVENT_AXIS == event.type);
+                    eventData.mNumber = event.number;
+                    eventData.mValue = event.value;
+                    notifyListeners(eventData);
+                    break;
+                default:
+                    break;
+            }
+        }
+        else
+        {
+            puts("Failed to process a gamepad event!");
+        }
+    }
+    return nullptr;
+}
